@@ -532,8 +532,8 @@ async def driver_copilot_chat(req: DriverChatRequest):
             if is_hf_space:
                 base_url = re.sub(r"/(chat|gradio_api/call/.*)?$", "", AI_INFERENCE_URL).rstrip("/")
                 endpoints = [
-                    f"{base_url}/gradio_api/call/gradio_chat",
                     f"{base_url}/gradio_api/call/chat",
+                    f"{base_url}/gradio_api/call/gradio_chat",
                 ]
                 hf_headers = {"Content-Type": "application/json"}
                 if hf_token:
@@ -545,9 +545,10 @@ async def driver_copilot_chat(req: DriverChatRequest):
 
                 for ep in endpoints:
                     try:
+                        # The /chat endpoint only takes user_message (1 param), not history
                         resp = await client.post(
                             ep,
-                            json={"data": [augmented_prompt, []]},
+                            json={"data": [augmented_prompt]},
                             headers=hf_headers,
                             timeout=15.0,
                         )
@@ -586,11 +587,18 @@ async def driver_copilot_chat(req: DriverChatRequest):
                                 if isinstance(parsed, dict) and "error" in parsed:
                                     quota_error = parsed["error"]
                                 elif isinstance(parsed, list) and len(parsed) > 0:
-                                    last = parsed[-1]
-                                    if isinstance(last, list) and len(last) > 1:
-                                        answer = str(last[1])
-                                    elif isinstance(last, str):
-                                        answer = str(last)
+                                    # API returns [str | float | bool | list | dict]
+                                    # First element is the response string
+                                    first = parsed[0]
+                                    if isinstance(first, str):
+                                        answer = first
+                                    elif isinstance(first, list) and len(first) > 1:
+                                        # Legacy format: [[user_msg, bot_msg], ...]
+                                        answer = str(first[-1][1] if isinstance(first[-1], list) else first[-1])
+                                    elif isinstance(first, dict):
+                                        answer = first.get("content", str(first))
+                                elif isinstance(parsed, str):
+                                    answer = parsed
                             except Exception:
                                 pass
                         elif "event: complete" in line:
