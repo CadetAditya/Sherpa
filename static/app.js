@@ -915,7 +915,7 @@ async function sendCopilotMessage(prompt) {
   typingDiv.innerHTML = `
     <div class="chat-msg-avatar">🧭</div>
     <div class="copilot-typing">
-      <span>Sherpa is analyzing fleet data</span>
+      <span id="copilot-typing-status">Sherpa is thinking (Fine-tuned Qwen 0.8B)...</span>
       <div class="typing-dots"><span></span><span></span><span></span></div>
     </div>
   `;
@@ -928,13 +928,18 @@ async function sendCopilotMessage(prompt) {
     let answer = null;
     let sourceBadge = null;
 
-    // 1. Primary: Execute inference directly on user's local hardware (WebGPU / WASM)
+    const onProgress = (pct, msg) => {
+      const statusEl = typingDiv.querySelector('#copilot-typing-status');
+      if (statusEl) statusEl.textContent = msg;
+    };
+
+    // 1. Primary: Execute inference directly using fine-tuned Qwen 0.8B GGUF on local hardware
     if (window.clientSherpa) {
       try {
-        const clientRes = await window.clientSherpa.ask(prompt, state.currentZone, state.cityRecommendations);
+        const clientRes = await window.clientSherpa.ask(prompt, state.currentZone, state.cityRecommendations, onProgress);
         if (clientRes && clientRes.answer) {
           answer = clientRes.answer;
-          sourceBadge = window.clientSherpa.hasWebGPU ? '⚡ Local WebGPU (GPU)' : '⚡ Local WASM (CPU)';
+          sourceBadge = `⚡ Local Hardware (Qwen 0.8B GGUF · ${clientRes.latencyMs}ms)`;
         }
       } catch (clientErr) {
         console.warn('Client hardware inference fallback to server:', clientErr);
@@ -960,7 +965,7 @@ async function sendCopilotMessage(prompt) {
 
       const data = await res.json();
       answer = data.answer;
-      sourceBadge = (data.status === 'success' || (data.model && data.model !== 'local-rules-engine')) ? '⚡ Local Hardware (Qwen 0.8B)' : 'Local Heuristics';
+      sourceBadge = (data.status === 'success' || (data.model && data.model !== 'local-rules-engine')) ? '⚡ Fine-Tuned Qwen 0.8B' : 'Local Heuristics';
     }
 
     typingDiv.remove();
