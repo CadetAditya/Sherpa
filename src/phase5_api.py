@@ -60,8 +60,8 @@ IST = timezone(timedelta(hours=5, minutes=30))
 BASE_DIR = Path(__file__).parent.parent
 STATIC_DIR = BASE_DIR / "static"
 
-# AI Inference Service Configuration (Optional Local Server / Ollama API)
-AI_INFERENCE_URL = os.getenv("AI_INFERENCE_URL", "").strip()
+# AI Inference Service Configuration (Hugging Face Space / Local Ollama / Custom API)
+AI_INFERENCE_URL = os.getenv("AI_INFERENCE_URL", "https://mohd-shujath-commitcon-driver-inference.hf.space").strip()
 AI_INFERENCE_KEY = os.getenv("AI_INFERENCE_KEY", "commitcon-secret-2026")
 
 # ---------------------------------------------------------------------------
@@ -508,6 +508,9 @@ async def driver_copilot_chat(req: DriverChatRequest):
         "X-API-Key": AI_INFERENCE_KEY,
         "User-Agent": "CommitCon-Backend",
     }
+    hf_token = os.getenv("HF_TOKEN")
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
 
     # Build context-rich prompt with live driver location & recommendation telemetry
     top_recs = recommendation_data.get("recommendations", [])[:3]
@@ -516,131 +519,103 @@ async def driver_copilot_chat(req: DriverChatRequest):
         for r in top_recs
     ])
 
-    # If external/local LLM server URL configured, attempt direct REST call
+    # If external/local LLM server URL configured, attempt inference
     if AI_INFERENCE_URL:
+        base_url = re.sub(r"/(chat|gradio_api/call/.*)?$", "", AI_INFERENCE_URL).rstrip("/")
+        augmented_prompt = (
+            f"[Context: Driver in {zone_id}. High-demand zones: {rec_summary}]. {req.driver_prompt}"
+            if rec_summary else f"[Context: Driver in {zone_id}]. {req.driver_prompt}"
+        )
+
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                # Local Ollama endpoint support
-                if "/api/chat" in AI_INFERENCE_URL or "11434" in AI_INFERENCE_URL:
-                    ollama_payload = {
-                        "model": os.getenv("OLLAMA_MODEL", "project-driver:latest"),
-                        "messages": [
-                            {
-                                "role": "system",
-                                "content": (
-                                    f"You are Sherpa, an AI driving assistant for the CommitCon ride-hailing platform in Bengaluru. "
-                                    f"Driver is in Zone {zone_id}. High-demand zones: {rec_summary}. "
-                                    f"Provide concise, direct advice to drivers."
-                                )
-                            },
-                            {"role": "user", "content": req.driver_prompt}
-                        ],
-                        "stream": False
-                    }
-                    resp = await client.post(AI_INFERENCE_URL, json=ollama_payload)
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                # 1. Direct REST POST /chat (FastAPI / custom microservice)
+                try:
+                    chat_ep = f"{base_url}/chat" if not AI_INFERENCE_URL.endswith("/chat") else AI_INFERENCE_URL
+                    resp = await client.post(chat_ep, json=payload, headers=headers, timeout=12.0)
                     if resp.status_code == 200:
                         data = resp.json()
-                        ans = data.get("message", {}).get("content", "").strip()
+                        ans = data.get("answer") or data.get("response") or (data.get("choices", [{}])[0].get("message", {}).get("content"))
                         if ans:
                             return DriverChatResponse(
                                 status="success",
                                 driver_id=req.driver_id,
-                                answer=ans,
-                                model="ollama-qwen-0.8b"
+                                answer=str(ans).strip(),
+                                model=data.get("model", "qwen-0.8b-api")
                             )
+                except Exception:
+                    pass
 
-                # Standard REST / Custom Microservice Endpoint
-                resp = await client.post(AI_INFERENCE_URL, json=payload, headers=headers)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    ans = data.get("answer") or data.get("response") or (data.get("choices", [{}])[0].get("message", {}).get("content"))
-                    if ans:
-                        return DriverChatResponse(
-                            status="success",
-                            driver_id=req.driver_id,
-                            answer=str(ans).strip(),
-                            model=data.get("model", "local-server-api")
-                        )
+                # 2. Ollama /api/chat
+                if "/api/chat" in AI_INFERENCE_URL or "11434" in AI_INFERENCE_URL:
+                    try:
+                        ollama_payload = {
+                            "model": os.getenv("OLLAMA_MODEL", "project-driver:latest"),
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": f"You are Sherpa, an AI driving assistant for the CommitCon platform in Bengaluru. Driver in {zone_id}. Demand targets: {rec_summary}."
+                                },
+                                {"role": "user", "content": req.driver_prompt}
+                            ],
+                            "stream": False
+                        }
+                        resp = await client.post(AI_INFERENCE_URL, json=ollama_payload, timeout=15.0)
+                        if resp.status_code == 200:
+                            ans = resp.json().get("message", {}).get("content", "").strip()
+                            if ans:
+                                return DriverChatResponse(
+                                    status="success",
+                                    driver_id=req.driver_id,
+                                    answer=ans,
+                                    model="ollama-qwen-0.8b"
+                                )
+                    except Exception:
+                        pass
+
+                # 3. Gradio Queue API (Hugging Face Space)
+                gradio_endpoints = [
+                    f"{base_url}/gradio_api/call/chat",
+                    f"{base_url}/gradio_api/call/gradio_chat",
+                ]
+                for ep in gradio_endpoints:
+                    try:
+                        call_resp = await client.post(ep, json={"data": [augmented_prompt]}, headers=headers, timeout=10.0)
+                        if call_resp.status_code == 200:
+                            event_id = call_resp.json().get("event_id")
+                            if event_id:
+                                async with client.stream("GET", f"{ep}/{event_id}", headers=headers, timeout=25.0) as stream:
+                                    async for line in stream.aiter_lines():
+                                        if line.startswith("data:"):
+                                            parsed = json.loads(line[5:].strip())
+                                            if isinstance(parsed, list) and len(parsed) > 0:
+                                                first = parsed[0]
+                                                if isinstance(first, str):
+                                                    return DriverChatResponse(
+                                                        status="success",
+                                                        driver_id=req.driver_id,
+                                                        answer=first.strip(),
+                                                        model="qwen-0.8b-gradio-api"
+                                                    )
+                                        elif "event: complete" in line:
+                                            break
+                    except Exception:
+                        continue
+
         except Exception as exc:
-            logger.warning("Local server/API inference unavailable at %s (%s), serving via fleet engine", AI_INFERENCE_URL, exc)
+            logger.warning("Remote LLM inference call failed: %s", exc)
 
-    # Built-in Intelligent Fleet Telemetry Engine (Fast, local, prompt-aware)
-    recs = recommendation_data.get("recommendations", [])
-    top_rec = recs[0] if recs else None
-    quick_rec = next((r for r in recs if r.get("travel_time_min", 999) <= 15 and r.get("supply_gap", 0) > 0), None)
-    if not quick_rec and recs:
-        quick_rec = min(recs, key=lambda r: r.get("travel_time_min", 999))
-
-    prompt_lower = (req.driver_prompt or "").lower()
-
-    if any(k in prompt_lower for k in ["highest", "surge", "most demand", "shortage"]):
-        if top_rec:
-            ans = (
-                f"Based on real-time ML demand forecasts across Bengaluru, the highest demand surge right now is in "
-                f"**{top_rec['zone_id']} {top_rec['zone_name']}** with a shortage gap of **+{top_rec['supply_gap']} drivers** needed "
-                f"(ETA: ~{top_rec['travel_time_min']} mins). Moving here maximizes your trip frequency and capture rate."
-            )
-        else:
-            ans = "Citywide demand is currently balanced across all zones. Continue monitoring airport and transit corridors."
-
-    elif any(k in prompt_lower for k in ["quick", "fast", "15 min", "under 15", "closest", "near"]):
-        if quick_rec:
-            ans = (
-                f"For the fastest repositioning from your position in **Zone {zone_id}**, head to "
-                f"**{quick_rec['zone_id']} {quick_rec['zone_name']}** (ETA: **{quick_rec['travel_time_min']} mins**, shortage: **+{quick_rec['supply_gap']} drivers**). "
-                f"You will minimize deadheading while reaching an active ride cluster."
-            )
-        elif top_rec:
-            ans = f"The closest high-demand opportunity is **{top_rec['zone_id']} {top_rec['zone_name']}** (ETA: {top_rec['travel_time_min']} mins)."
-        else:
-            ans = "No high-priority short-distance zones currently detected."
-
-    elif any(k in prompt_lower for k in ["airport", "z02"]):
-        airport_rec = next((r for r in recs if r.get("zone_id") == "Z02"), None)
-        if airport_rec:
-            ans = (
-                f"**Z02 Airport** currently has an expected shortage of **+{airport_rec.get('supply_gap', 10)} drivers** "
-                f"(ETA from {zone_id}: ~{airport_rec.get('travel_time_min', 45)} mins). "
-                f"Due to continuous flight arrivals, heading to the airport offers high-fare trips and reliable allocation."
-            )
-        else:
-            ans = "Z02 Airport currently has balanced supply. Local urban corridors may offer higher immediate ride density."
-
-    elif any(k in prompt_lower for k in ["maximize", "earning", "money", "profit", "60 min", "hour"]):
-        if top_rec:
-            ans = (
-                f"To maximize earnings in the next 60 minutes from **Zone {zone_id}**, reposition to "
-                f"**{top_rec['zone_id']} {top_rec['zone_name']}** (ETA: {top_rec['travel_time_min']} mins, +{top_rec['supply_gap']} drivers needed). "
-                f"Capturing rides in this shortage cluster significantly reduces unpaid idle deadheading."
-            )
-        else:
-            ans = "Focus on dense transit hubs to maintain continuous ride completion."
-
-    elif any(k in prompt_lower for k in ["hello", "hi", "hey", "who are you"]):
-        ans = (
-            f"Hello! I'm Sherpa, your driver copilot for Bengaluru fleet repositioning. "
-            f"You are currently located in **Zone {zone_id}**. Ask me where the highest demand surge is, "
-            f"or ask for the quickest reposition under 15 minutes!"
-        )
-
-    elif any(k in prompt_lower for k in ["where am i", "current zone", "my location"]):
-        ans = f"You are currently stationed in **Zone {zone_id}**. The fleet model is tracking incoming demand across all 20 Bengaluru zones around you."
-
-    else:
-        if top_rec:
-            ans = (
-                f"From your current position in **Zone {zone_id}**, the optimal recommendation is to reposition to "
-                f"**{top_rec['zone_id']} {top_rec['zone_name']}** (ETA: {top_rec['travel_time_min']} mins, supply shortage: +{top_rec['supply_gap']} drivers). "
-                f"Traffic flow along this corridor is clear, offering the fastest route to high booking frequency."
-            )
-        else:
-            ans = "All city zones are well-balanced at this hour. Monitor airport and transit hubs for incoming demand spikes."
-
+    # If the LLM server could not be reached, return a clear, honest status notice:
+    top_rec = recommendation_data["recommendations"][0] if recommendation_data.get("recommendations") else None
+    rec_hint = f" Reposition recommendation: **{top_rec['zone_id']} {top_rec['zone_name']}** (ETA: {top_rec['travel_time_min']}m)." if top_rec else ""
     return DriverChatResponse(
-        status="success",
+        status="fallback",
         driver_id=req.driver_id,
-        answer=ans,
-        model="local-fleet-engine"
+        answer=(
+            f"The backend LLM server is currently not responding to your request.{rec_hint}\n\n"
+            f"👉 **Run on your GPU:** In the **Inference Mode** dropdown above, select **'⚡ Client Hardware (WebGPU / WASM)'** to run the fine-tuned Qwen 0.8B model directly in your browser on your own hardware with zero server dependency."
+        ),
+        model="server-api-offline"
     )
 
 

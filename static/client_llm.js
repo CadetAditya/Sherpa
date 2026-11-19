@@ -14,7 +14,8 @@ class ClientSherpaEngine {
         this.loadProgress = 0;
         this.hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
         this.activeProvider = this.hasWebGPU ? 'WebGPU Hardware Acceleration' : 'WASM SIMD Hardware Acceleration';
-        this.modelUrl = "/model/qwen.gguf";
+        this.localModelUrl = "/model/qwen.gguf";
+        this.hostedModelUrl = "https://huggingface.co/spaces/Mohd-Shujath/commitcon-driver-inference/resolve/main/Qwen3.5-0.8B.Q4_K_M.gguf";
     }
 
     /**
@@ -64,10 +65,20 @@ class ClientSherpaEngine {
 
             this.wllama = new Wllama(configPaths);
 
-            if (onProgress) onProgress(15, "Loading fine-tuned Qwen 0.8B GGUF into hardware cache...");
+            if (onProgress) onProgress(15, "Connecting to fine-tuned Qwen 0.8B weights...");
 
-            // Load fine-tuned GGUF weights strictly from local server endpoint (/model/qwen.gguf)
-            const targetUrl = this.modelUrl;
+            // Try local server endpoint first (e.g. localhost), fallback to hosted Git LFS URL when on Render
+            let targetUrl = this.localModelUrl;
+            try {
+                const headCheck = await fetch(targetUrl, { method: "HEAD" });
+                if (!headCheck.ok) {
+                    targetUrl = this.hostedModelUrl;
+                }
+            } catch {
+                targetUrl = this.hostedModelUrl;
+            }
+
+            console.log("Loading fine-tuned Qwen 0.8B weights from:", targetUrl);
 
             await this.wllama.loadModelFromUrl(targetUrl, {
                 n_ctx: 2048,
@@ -75,13 +86,13 @@ class ClientSherpaEngine {
                 progressCallback: ({ loaded, total }) => {
                     const pct = total > 0 ? Math.round((loaded / total) * 100) : 50;
                     this.loadProgress = pct;
-                    if (onProgress) onProgress(pct, `Loading fine-tuned Qwen 0.8B: ${pct}%`);
+                    if (onProgress) onProgress(pct, `Loading fine-tuned Qwen 0.8B into GPU cache: ${pct}%`);
                 }
             });
 
             this.isLoaded = true;
             this.isLoading = false;
-            if (onProgress) onProgress(100, "Fine-tuned Qwen 0.8B loaded on local hardware!");
+            if (onProgress) onProgress(100, "Fine-tuned Qwen 0.8B ready on hardware!");
             return true;
         } catch (err) {
             console.error("Local hardware model load error:", err);
@@ -113,8 +124,7 @@ class ClientSherpaEngine {
 
         const recSummary = topRecs.map(r => `${r.zone_id} ${r.zone_name} (gap: +${r.supply_gap}, ETA: ${r.travel_time_min || 15}m)`).join(", ");
 
-        const systemPrompt = `You are Sherpa, an AI driving assistant for the CommitCon ride-hailing repositioning platform in Bengaluru. Provide concise, direct, helpful recommendations to drivers about where to reposition for high demand, earnings, and low traffic delays.
-Live Context: Driver is in Zone ${driverZoneId}. Top citywide demand shortage zones right now: ${recSummary || 'Z02 Airport (+10 drivers), Z07 Railway Station (+7 drivers)'}.`;
+        const systemPrompt = `You are Sherpa, an AI driving assistant for the CommitCon ride-hailing repositioning platform in Bengaluru. Answer driver questions directly, intelligently, and helpfully. If asked about repositioning or high demand, provide concise recommendations based on live context (Driver in Zone ${driverZoneId}, high shortage zones: ${recSummary || 'Z02 Airport (+10 drivers), Z07 Railway Station (+7 drivers)'}). If asked general, conversational, or unrelated questions (like jokes, math, or trivia), answer them naturally as an AI assistant.`;
 
         // 3. Execute inference using the REAL fine-tuned Qwen 0.8B neural network
         const response = await this.wllama.createChatCompletion({

@@ -982,7 +982,13 @@ async function sendCopilotMessage(prompt) {
 
       const data = await res.json();
       answer = data.answer;
-      sourceBadge = (data.model === 'ollama-qwen-0.8b') ? '🖥️ Local Ollama (Qwen 0.8B)' : '🖥️ Local Server (Fleet Engine)';
+      if (data.model === 'ollama-qwen-0.8b') {
+        sourceBadge = '🖥️ Local Ollama (Qwen 0.8B)';
+      } else if (data.model && data.model.includes('qwen')) {
+        sourceBadge = '⚡ Fine-Tuned Qwen 0.8B (API)';
+      } else {
+        sourceBadge = '🖥️ Server Response';
+      }
     }
 
     typingDiv.remove();
