@@ -234,6 +234,19 @@ function setupEventListeners() {
     copilotMicBtn.addEventListener('click', toggleVoiceRecording);
   }
 
+  // Inference Mode Selector Listener
+  const copilotModeSelect = document.getElementById('copilot-mode-select');
+  if (copilotModeSelect) {
+    copilotModeSelect.addEventListener('change', () => {
+      const modelLabel = document.getElementById('copilot-model-name');
+      if (modelLabel) {
+        modelLabel.textContent = copilotModeSelect.value === 'client-hardware'
+          ? '⚡ Local Hardware (WebGPU / WASM) Active'
+          : '🖥️ Local Server / API (/api/chat) Active';
+      }
+    });
+  }
+
   if (copilotVoiceStopBtn) {
     copilotVoiceStopBtn.addEventListener('click', stopVoiceRecording);
   }
@@ -856,7 +869,7 @@ function appendCopilotMessage(role, text, save = true, meta = null) {
         ${formattedHtml}
         <div class="chat-bubble-footer">
           <span class="chat-time">${timeStr}</span>
-          ${meta && meta.badge ? `<span class="hf-badge" style="background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;border-radius:10px;padding:2px 7px;font-size:10px;font-weight:600;display:inline-flex;align-items:center;gap:3px;">🤗 ${meta.badge}</span>` : ''}
+          ${meta && meta.badge ? `<span class="inference-source-badge" style="background:#ECFDF5;color:#065F46;border:1px solid #A7F3D0;border-radius:10px;padding:2px 7px;font-size:10px;font-weight:600;display:inline-flex;align-items:center;gap:3px;">${meta.badge}</span>` : ''}
           <button type="button" class="msg-speak-btn" title="Listen to this message">
             <span class="speak-icon">🔊</span>
             <span>Listen</span>
@@ -933,20 +946,24 @@ async function sendCopilotMessage(prompt) {
       if (statusEl) statusEl.textContent = msg;
     };
 
-    // 1. Primary: Execute inference directly using fine-tuned Qwen 0.8B GGUF on local hardware
-    if (window.clientSherpa) {
+    const modeSelect = document.getElementById('copilot-mode-select');
+    const selectedMode = modeSelect ? modeSelect.value : 'client-hardware';
+
+    // 1. Client Hardware Mode: Execute fine-tuned Qwen 0.8B GGUF directly in browser via WebGPU / WASM SIMD
+    if (selectedMode === 'client-hardware' && window.clientSherpa) {
       try {
         const clientRes = await window.clientSherpa.ask(prompt, state.currentZone, state.cityRecommendations, onProgress);
         if (clientRes && clientRes.answer) {
           answer = clientRes.answer;
-          sourceBadge = `⚡ Local Hardware (Qwen 0.8B GGUF · ${clientRes.latencyMs}ms)`;
+          sourceBadge = `⚡ Local Hardware (Qwen 0.8B · ${clientRes.latencyMs}ms)`;
         }
       } catch (clientErr) {
-        console.warn('Client hardware inference fallback to server:', clientErr);
+        console.warn('Client hardware inference failed, falling back to local server:', clientErr);
+        onProgress(100, "Hardware fallback: Querying local server API...");
       }
     }
 
-    // 2. Fallback to server if client-side inference was unavailable
+    // 2. Local Server / API Mode (/api/chat -> Ollama or Local Fleet Engine)
     if (!answer) {
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -965,7 +982,7 @@ async function sendCopilotMessage(prompt) {
 
       const data = await res.json();
       answer = data.answer;
-      sourceBadge = (data.status === 'success' || (data.model && data.model !== 'local-rules-engine')) ? '⚡ Fine-Tuned Qwen 0.8B' : 'Local Heuristics';
+      sourceBadge = (data.model === 'ollama-qwen-0.8b') ? '🖥️ Local Ollama (Qwen 0.8B)' : '🖥️ Local Server (Fleet Engine)';
     }
 
     typingDiv.remove();
