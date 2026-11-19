@@ -13,8 +13,8 @@ class ClientSherpaEngine {
         this.isLoading = false;
         this.loadProgress = 0;
         this.hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
-        this.activeProvider = 'WASM SIMD Hardware Acceleration';
-        this.modelUrl = "https://huggingface.co/spaces/Mohd-Shujath/commitcon-driver-inference/resolve/main/Qwen3.5-0.8B.Q4_K_M.gguf";
+        this.activeProvider = this.hasWebGPU ? 'WebGPU Hardware Acceleration' : 'WASM SIMD Hardware Acceleration';
+        this.modelUrl = "/model/qwen.gguf";
     }
 
     /**
@@ -66,14 +66,8 @@ class ClientSherpaEngine {
 
             if (onProgress) onProgress(15, "Loading fine-tuned Qwen 0.8B GGUF into hardware cache...");
 
-            // Try local server endpoint first, fallback to CDN
-            let targetUrl = "/model/qwen.gguf";
-            try {
-                const headCheck = await fetch(targetUrl, { method: "HEAD" });
-                if (!headCheck.ok) targetUrl = this.modelUrl;
-            } catch {
-                targetUrl = this.modelUrl;
-            }
+            // Load fine-tuned GGUF weights strictly from local server endpoint (/model/qwen.gguf)
+            const targetUrl = this.modelUrl;
 
             await this.wllama.loadModelFromUrl(targetUrl, {
                 n_ctx: 2048,

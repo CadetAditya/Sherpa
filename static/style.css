@@ -1654,6 +1654,47 @@ body.uber-theme {
   transform: scale(1.05);
 }
 
+/* Copilot Mode Selector Strip */
+.copilot-mode-selector-strip {
+  padding: 8px 14px;
+  background: #0F172A;
+  border-bottom: 1px solid #1E293B;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.mode-selector-icon {
+  font-size: 13px;
+}
+
+.mode-selector-label {
+  color: #94A3B8;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.copilot-mode-dropdown {
+  flex: 1;
+  background: #1E293B;
+  color: #F8FAFC;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.copilot-mode-dropdown:hover,
+.copilot-mode-dropdown:focus {
+  border-color: #38BDF8;
+  background: #273549;
+}
+
 .copilot-quick-prompts {
   padding: 8px 14px;
   background: var(--uber-gray-50);

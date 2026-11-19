@@ -336,6 +336,16 @@
             </div>
           </div>
 
+          <!-- INFERENCE MODE SELECTOR (Client Hardware vs Local Server API) -->
+          <div class="copilot-mode-selector-strip">
+            <span class="mode-selector-icon">⚙️</span>
+            <label for="copilot-mode-select" class="mode-selector-label">Inference Mode:</label>
+            <select id="copilot-mode-select" class="copilot-mode-dropdown">
+              <option value="client-hardware" selected>⚡ Client Hardware (WebGPU / WASM)</option>
+              <option value="local-server">🖥️ Local Server / API (/api/chat)</option>
+            </select>
+          </div>
+
           <!-- QUICK PROMPT CHIPS -->
           <div class="copilot-quick-prompts">
             <div class="quick-prompts-label">Suggested Questions:</div>
