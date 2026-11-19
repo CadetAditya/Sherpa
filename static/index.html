@@ -322,7 +322,7 @@
                 <div class="copilot-title">Sherpa AI</div>
                 <div class="copilot-status-line">
                   <span class="copilot-live-dot"></span>
-                  <span class="copilot-model-name">GPU Active • project-driver:latest</span>
+                  <span id="copilot-model-name" class="copilot-model-name">⚡ Local Hardware (WebGPU / WASM) Active</span>
                 </div>
               </div>
             </div>
@@ -708,6 +708,8 @@
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- In-Browser Hardware-Accelerated Client LLM Engine -->
+  <script src="/static/client_llm.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

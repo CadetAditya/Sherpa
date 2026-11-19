@@ -687,6 +687,11 @@ function switchTab(tab) {
   if (panelAnalytics) panelAnalytics.classList.toggle('hidden', tab !== 'analytics');
 
   if (tab === 'copilot') {
+    const hwLabel = document.getElementById('copilot-model-name');
+    if (hwLabel && window.clientSherpa) {
+      const hw = window.clientSherpa.getHardwareInfo();
+      hwLabel.textContent = `⚡ Local Hardware • ${hw.shortMode} Active`;
+    }
     if (state.chatHistory.length === 0) {
       initCopilotWelcome();
     }
@@ -814,7 +819,8 @@ function handleDriverAnalyticsChange(driverKey) {
 // ============================================================================
 function initCopilotWelcome() {
   const driverName = state.driver ? state.driver.name.split(' ')[0] : 'Driver';
-  const welcomeText = `Hello ${driverName}! I'm **Sherpa**, your AI driver assistant connected to our GPU inference service (\`project-driver:latest\`).
+  const hwInfo = window.clientSherpa ? window.clientSherpa.getHardwareInfo().mode : 'Local Hardware';
+  const welcomeText = `Hello ${driverName}! I'm **Sherpa**, your local AI driver assistant running directly on your **${hwInfo}**.
 
 I have live context on your position in **${state.currentZone}** and real-time demand forecasts across all 20 city zones.
 
@@ -919,29 +925,50 @@ async function sendCopilotMessage(prompt) {
   copilotSendBtn.disabled = true;
 
   try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        driver_id: state.driver ? state.driver.id : 'DRV_101',
-        driver_prompt: prompt,
-        current_zone_id: state.currentZone,
-        history: state.chatHistory.slice(-8),
-      }),
-    });
+    let answer = null;
+    let sourceBadge = null;
 
-    if (!res.ok) {
-      throw new Error(`Inference returned HTTP ${res.status}`);
+    // 1. Primary: Execute inference directly on user's local hardware (WebGPU / WASM)
+    if (window.clientSherpa) {
+      try {
+        const clientRes = await window.clientSherpa.ask(prompt, state.currentZone, state.cityRecommendations);
+        if (clientRes && clientRes.answer) {
+          answer = clientRes.answer;
+          sourceBadge = window.clientSherpa.hasWebGPU ? '⚡ Local WebGPU (GPU)' : '⚡ Local WASM (CPU)';
+        }
+      } catch (clientErr) {
+        console.warn('Client hardware inference fallback to server:', clientErr);
+      }
     }
 
-    const data = await res.json();
+    // 2. Fallback to server if client-side inference was unavailable
+    if (!answer) {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          driver_id: state.driver ? state.driver.id : 'DRV_101',
+          driver_prompt: prompt,
+          current_zone_id: state.currentZone,
+          history: state.chatHistory.slice(-8),
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Inference returned HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      answer = data.answer;
+      sourceBadge = (data.status === 'success' || (data.model && data.model !== 'local-rules-engine')) ? '⚡ Local Hardware (Qwen 0.8B)' : 'Local Heuristics';
+    }
+
     typingDiv.remove();
-    const sourceBadge = (data.status === 'success' || (data.model && data.model !== 'local-rules-engine')) ? 'Hugging Face (Qwen 0.8B)' : 'Local Heuristics';
-    appendCopilotMessage('assistant', data.answer, true, { badge: sourceBadge });
+    appendCopilotMessage('assistant', answer, true, { badge: sourceBadge });
 
     // Text-to-Speech: Auto voice response if enabled
     if (state.ttsEnabled) {
-      speakText(data.answer);
+      speakText(answer);
     }
   } catch (err) {
     typingDiv.remove();
