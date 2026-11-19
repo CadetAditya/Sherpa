@@ -714,6 +714,21 @@ async def driver_copilot_chat(req: DriverChatRequest):
 
 
 # ---------------------------------------------------------------------------
+# Fine-Tuned Model Weights Serving (Local Hardware Acceleration)
+# ---------------------------------------------------------------------------
+@app.get("/model/qwen.gguf")
+def get_model_file():
+    candidate_paths = [
+        Path(__file__).parent.parent / "inference" / "ollama" / "Qwen3.5-0.8B.Q4_K_M.gguf",
+        Path(__file__).parent.parent / "static" / "models" / "Qwen3.5-0.8B.Q4_K_M.gguf",
+    ]
+    for p in candidate_paths:
+        if p.exists():
+            return FileResponse(p, media_type="application/octet-stream", filename="Qwen3.5-0.8B.Q4_K_M.gguf")
+    raise HTTPException(status_code=404, detail="Model file not found locally")
+
+
+# ---------------------------------------------------------------------------
 # Standard Recommendation Endpoints (Phases 4 & 5 Core Requirements)
 # ---------------------------------------------------------------------------
 @app.get("/health", response_model=HealthResponse)

@@ -1,126 +1,145 @@
 /**
  * CommitCon Sherpa Driver Copilot — In-Browser Hardware-Accelerated LLM Engine
- * Executes AI reasoning directly on the user's local hardware via WebGPU / WASM SIMD.
+ * Powered by Wllama (WebAssembly + SIMD llama.cpp runtime).
+ * Executes the REAL fine-tuned Qwen 0.8B Q4_K_M GGUF model directly on user hardware.
  * Modeled on the LPU Supervised Project client engine architecture.
  * Zero external cloud API calls. Zero GPU quota limits. Zero server RAM overhead.
  */
 
 class ClientSherpaEngine {
     constructor() {
+        this.wllama = null;
         this.isLoaded = false;
         this.isLoading = false;
-        this.hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
-        this.activeProvider = this.hasWebGPU ? 'webgpu' : 'wasm';
-        this.modelName = 'Qwen-0.8B-Driver-Copilot';
         this.loadProgress = 0;
+        this.hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
+        this.activeProvider = 'WASM SIMD Hardware Acceleration';
+        this.modelUrl = "https://huggingface.co/spaces/Mohd-Shujath/commitcon-driver-inference/resolve/main/Qwen3.5-0.8B.Q4_K_M.gguf";
     }
 
     /**
-     * Inspects host device hardware capabilities (GPU vs Multi-core CPU).
+     * Inspects host device hardware capabilities.
      */
     getHardwareInfo() {
-        if (this.hasWebGPU) {
-            return {
-                mode: 'WebGPU (Hardware Accelerated GPU)',
-                shortMode: 'WebGPU (GPU)',
-                badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
-                icon: '⚡',
-                provider: 'webgpu'
-            };
-        } else {
-            return {
-                mode: 'WASM SIMD (Multi-threaded CPU Acceleration)',
-                shortMode: 'WASM SIMD (CPU)',
-                badgeClass: 'bg-sky-100 text-sky-800 border-sky-300',
-                icon: '💻',
-                provider: 'wasm'
-            };
-        }
+        return {
+            mode: this.hasWebGPU ? 'Local WebGPU / WASM Hardware Engine' : 'Local WASM SIMD Hardware Engine',
+            shortMode: 'Local Hardware (WASM/GPU)',
+            badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+            icon: '⚡',
+        };
     }
 
     /**
-     * Lazy-loads the neural engine into local client memory only when required.
+     * Lazy-loads the fine-tuned Qwen 0.8B GGUF model into local client memory.
      */
     async loadModel(onProgress = null) {
         if (this.isLoaded) return true;
-        if (this.isLoading) return false;
+        if (this.isLoading) {
+            while (this.isLoading) {
+                await new Promise(r => setTimeout(r, 200));
+            }
+            return this.isLoaded;
+        }
 
         this.isLoading = true;
-        if (onProgress) onProgress(10, 'Initializing hardware acceleration pipeline...');
-
         try {
-            // Emulate progressive weight allocation into client VRAM / WASM Heap
-            const steps = [
-                { p: 35, msg: `Allocating ${this.hasWebGPU ? 'WebGPU VRAM buffers' : 'WASM SIMD memory space'}...` },
-                { p: 70, msg: `Loading fine-tuned Qwen 0.8B quantized weights into local hardware...` },
-                { p: 100, msg: `Sherpa ready on ${this.hasWebGPU ? 'local GPU' : 'local CPU'}!` }
-            ];
+            if (onProgress) onProgress(5, "Initializing local WebAssembly llama runtime...");
 
-            for (const step of steps) {
-                await new Promise(r => setTimeout(r, 120));
-                if (onProgress) onProgress(step.p, step.msg);
+            // Dynamically import Wllama and CDN paths
+            const { Wllama } = await import("https://cdn.jsdelivr.net/npm/@wllama/wllama@latest/esm/index.js");
+            let configPaths;
+            try {
+                const cdnMod = await import("https://cdn.jsdelivr.net/npm/@wllama/wllama@latest/esm/wasm-from-cdn.js");
+                configPaths = cdnMod.default || cdnMod.WasmFromCDN;
+            } catch (cdnErr) {
+                const baseURL = "https://cdn.jsdelivr.net/npm/@wllama/wllama@latest/esm/";
+                configPaths = {
+                    "single-thread/wllama.js": baseURL + "single-thread/wllama.js",
+                    "single-thread/wllama.wasm": baseURL + "single-thread/wllama.wasm",
+                    "multi-thread/wllama.js": baseURL + "multi-thread/wllama.js",
+                    "multi-thread/wllama.wasm": baseURL + "multi-thread/wllama.wasm",
+                    "multi-thread/wllama.worker.mjs": baseURL + "multi-thread/wllama.worker.mjs",
+                };
             }
+
+            this.wllama = new Wllama(configPaths);
+
+            if (onProgress) onProgress(15, "Loading fine-tuned Qwen 0.8B GGUF into hardware cache...");
+
+            // Try local server endpoint first, fallback to CDN
+            let targetUrl = "/model/qwen.gguf";
+            try {
+                const headCheck = await fetch(targetUrl, { method: "HEAD" });
+                if (!headCheck.ok) targetUrl = this.modelUrl;
+            } catch {
+                targetUrl = this.modelUrl;
+            }
+
+            await this.wllama.loadModelFromUrl(targetUrl, {
+                n_ctx: 2048,
+                n_gpu_layers: this.hasWebGPU ? 32 : 0,
+                progressCallback: ({ loaded, total }) => {
+                    const pct = total > 0 ? Math.round((loaded / total) * 100) : 50;
+                    this.loadProgress = pct;
+                    if (onProgress) onProgress(pct, `Loading fine-tuned Qwen 0.8B: ${pct}%`);
+                }
+            });
 
             this.isLoaded = true;
             this.isLoading = false;
+            if (onProgress) onProgress(100, "Fine-tuned Qwen 0.8B loaded on local hardware!");
             return true;
         } catch (err) {
-            console.warn('Local hardware engine init warning:', err);
+            console.error("Local hardware model load error:", err);
             this.isLoading = false;
             return false;
         }
     }
 
     /**
-     * Executes inference on the driver's prompt directly on their device hardware.
+     * Executes inference with the REAL fine-tuned neural network on the driver's prompt.
      */
-    async ask(userPrompt, driverZoneId, cityRecommendations, onStream = null) {
+    async ask(userPrompt, driverZoneId, cityRecommendations, onProgress = null) {
         const t0 = performance.now();
 
-        // Ensure model is initialized on hardware on-demand
+        // 1. Ensure the real fine-tuned model is loaded into local memory
         if (!this.isLoaded) {
-            await this.loadModel();
+            const ok = await this.loadModel(onProgress);
+            if (!ok) {
+                throw new Error("Could not initialize local model on this device.");
+            }
         }
 
-        // Extract real-time telemetry from frontend state
+        // 2. Prepare live driver repositioning context
         const zones = (cityRecommendations && cityRecommendations.zones) ? cityRecommendations.zones : [];
-        const sortedShortages = [...zones]
+        const topRecs = [...zones]
             .filter(z => (z.supply_gap && z.supply_gap > 0) || z.recommended_action === 'REPOSITION_IN')
-            .sort((a, b) => (b.supply_gap || 0) - (a.supply_gap || 0));
+            .sort((a, b) => (b.supply_gap || 0) - (a.supply_gap || 0))
+            .slice(0, 3);
 
-        const topTarget = sortedShortages[0] || { zone_id: 'Z02', zone_name: 'Airport', supply_gap: 10, travel_time_min: 45 };
-        const quickTarget = [...zones]
-            .filter(z => (z.travel_time_min || 999) <= 15 && (z.supply_gap && z.supply_gap > 0))
-            .sort((a, b) => (b.supply_gap || 0) - (a.supply_gap || 0))[0] || 
-            [...zones].filter(z => (z.travel_time_min || 999) <= 20)[0] || 
-            { zone_id: 'Z07', zone_name: 'Railway Station', travel_time_min: 14, supply_gap: 7 };
+        const recSummary = topRecs.map(r => `${r.zone_id} ${r.zone_name} (gap: +${r.supply_gap}, ETA: ${r.travel_time_min || 15}m)`).join(", ");
 
-        const currentZoneObj = zones.find(z => z.zone_id === driverZoneId);
-        const currentZoneName = currentZoneObj ? currentZoneObj.zone_name : `Zone ${driverZoneId}`;
+        const systemPrompt = `You are Sherpa, an AI driving assistant for the CommitCon ride-hailing repositioning platform in Bengaluru. Provide concise, direct, helpful recommendations to drivers about where to reposition for high demand, earnings, and low traffic delays.
+Live Context: Driver is in Zone ${driverZoneId}. Top citywide demand shortage zones right now: ${recSummary || 'Z02 Airport (+10 drivers), Z07 Railway Station (+7 drivers)'}.`;
 
-        // Synthesize domain reasoning using local hardware pipeline
-        const promptLower = (userPrompt || '').toLowerCase();
-        let answer = '';
+        // 3. Execute inference using the REAL fine-tuned Qwen 0.8B neural network
+        const response = await this.wllama.createChatCompletion({
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: userPrompt }
+            ],
+            temperature: 0.7,
+            max_tokens: 256,
+        });
 
-        if (promptLower.includes('highest') || promptLower.includes('surge') || promptLower.includes('demand')) {
-            answer = `Based on live ML demand forecasts across Bengaluru, the highest demand surge right now is in **${topTarget.zone_id} ${topTarget.zone_name}** with a shortage gap of **+${topTarget.supply_gap} drivers** needed (ETA ~${topTarget.travel_time_min || 45} mins). Moving here maximizes your trip frequency and capture rate.`;
-        } else if (promptLower.includes('quick') || promptLower.includes('15 min') || promptLower.includes('fast') || promptLower.includes('under 15')) {
-            answer = `For the quickest reposition from your position in **${driverZoneId} (${currentZoneName})**, head to **${quickTarget.zone_id} ${quickTarget.zone_name}** (ETA: **${quickTarget.travel_time_min || 14} mins**, shortage: **+${quickTarget.supply_gap || 5} drivers**). You will minimize idle deadheading while hitting a strong incoming ride cluster.`;
-        } else if (promptLower.includes('airport') || promptLower.includes('z02')) {
-            const airport = zones.find(z => z.zone_id === 'Z02') || topTarget;
-            answer = `**Z02 Airport** currently has a high demand forecast of **${airport.predicted_requests || 23} rides** against only **${airport.available_drivers || 4} active drivers** (+${airport.supply_gap || 10} shortage). Given the travel time from ${driverZoneId} (~${airport.travel_time_min || 45} mins), this trip offers high fares and guaranteed ride allocation upon arrival.`;
-        } else {
-            answer = `From your current location in **${driverZoneId} (${currentZoneName})**, our optimal recommendation is to reposition to **${topTarget.zone_id} ${topTarget.zone_name}** (ETA: **${topTarget.travel_time_min || 25} mins**, supply shortage: **+${topTarget.supply_gap || 8} drivers**). Traffic flow along this corridor is clear, offering the fastest route to high booking frequency.`;
-        }
-
+        const answer = response.choices[0].message.content.trim();
         const latencyMs = Math.round(performance.now() - t0);
 
         return {
-            status: 'success',
+            status: "success",
             answer: answer,
             latencyMs: latencyMs,
-            hardwareProvider: this.hasWebGPU ? 'WebGPU (Hardware GPU)' : 'WASM SIMD (Multi-core CPU)',
-            model: this.hasWebGPU ? 'client-webgpu-qwen' : 'client-wasm-qwen'
+            model: "qwen-0.8b-gguf-hardware"
         };
     }
 }
