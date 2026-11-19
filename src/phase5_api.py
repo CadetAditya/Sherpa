@@ -525,6 +525,21 @@ async def driver_copilot_chat(req: DriverChatRequest):
     )
     augmented_prompt = f"{context_prefix}{req.driver_prompt}"
 
+    # If no external URL configured, serve immediately from local hardware engine
+    if not AI_INFERENCE_URL:
+        top_rec = recommendation_data["recommendations"][0] if recommendation_data.get("recommendations") else None
+        ans = (
+            f"Based on real-time fleet forecasts, your highest priority target is {top_rec['zone_id']} {top_rec['zone_name']} "
+            f"with a shortage of {top_rec['supply_gap']} drivers (ETA: {top_rec['travel_time_min']}m). Reposition here to capture surge demand."
+            if top_rec else "All city zones are currently well-balanced. Monitor airport and transit hubs for incoming demand."
+        )
+        return DriverChatResponse(
+            status="success",
+            driver_id=req.driver_id,
+            answer=ans,
+            model="local-hardware-engine"
+        )
+
     is_hf_space = "hf.space" in AI_INFERENCE_URL or "huggingface.co" in AI_INFERENCE_URL
 
     try:
