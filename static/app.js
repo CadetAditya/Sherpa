@@ -17,8 +17,8 @@ const state = {
   // Map state
   map: null,
   osmLayer: null,
-  trafficOverlay: null,
-  isTrafficView: true,
+  darkLayer: null,
+  isDarkMode: false,
   driverMarker: null,
   zoneMarkers: {},           // 'Z01': L.marker / L.circleMarker
   routePolyline: null,
@@ -1222,9 +1222,6 @@ function formatReason(code) {
 // ============================================================================
 // MAP VISUALIZATION (LEAFLET INTEGRATION)
 // ============================================================================
-// Map boundaries matching static traffic image (lat 12.83 to 13.23, lon 77.46 to 77.76)
-const TRAFFIC_BOUNDS = [[12.83, 77.46], [13.23, 77.76]];
-
 function initMap() {
   if (state.map) return; // already initialized
 
@@ -1251,40 +1248,41 @@ function initMap() {
     attribution: '&copy; OpenStreetMap contributors',
   }).addTo(state.map);
 
-  // 2. Custom Pane for Traffic Overlay (below vectors, markers & popups)
-  state.map.createPane('trafficPane');
-  state.map.getPane('trafficPane').style.zIndex = 250;
-
-  // 3. Static Traffic View Map Image (Photorealistic traffic conditions, no API key)
-  state.trafficOverlay = L.imageOverlay('/static/traffic_map.png', TRAFFIC_BOUNDS, {
-    opacity: 0.96,
-    interactive: false,
-    pane: 'trafficPane',
-  }).addTo(state.map);
-
-  state.isTrafficView = true;
+  // 2. Dark theme layer for optional night mode toggle
+  state.darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  });
+  state.isDarkMode = false;
 
   // Render initial driver marker
   updateDriverMarker();
 }
 
 function toggleMapTheme() {
-  if (state.isTrafficView) {
-    // Hide static traffic overlay -> Reveal pure OpenStreetMap
-    if (state.trafficOverlay && state.map.hasLayer(state.trafficOverlay)) {
-      state.map.removeLayer(state.trafficOverlay);
+  state.isDarkMode = !state.isDarkMode;
+  if (state.isDarkMode) {
+    if (state.map.hasLayer(state.osmLayer)) {
+      state.map.removeLayer(state.osmLayer);
     }
-    state.isTrafficView = false;
-    mapThemeBtn.querySelector('.ctrl-icon').textContent = '🚦';
-    mapThemeBtn.querySelector('.ctrl-tooltip').textContent = 'Traffic View';
+    state.darkLayer.addTo(state.map);
+    if (mapThemeBtn) {
+      const icon = mapThemeBtn.querySelector('.ctrl-icon');
+      const tooltip = mapThemeBtn.querySelector('.ctrl-tooltip');
+      if (icon) icon.textContent = '☀️';
+      if (tooltip) tooltip.textContent = 'Light Mode';
+    }
   } else {
-    // Show static traffic overlay
-    if (state.trafficOverlay && !state.map.hasLayer(state.trafficOverlay)) {
-      state.trafficOverlay.addTo(state.map);
+    if (state.map.hasLayer(state.darkLayer)) {
+      state.map.removeLayer(state.darkLayer);
     }
-    state.isTrafficView = true;
-    mapThemeBtn.querySelector('.ctrl-icon').textContent = '🗺️';
-    mapThemeBtn.querySelector('.ctrl-tooltip').textContent = 'Street Map';
+    state.osmLayer.addTo(state.map);
+    if (mapThemeBtn) {
+      const icon = mapThemeBtn.querySelector('.ctrl-icon');
+      const tooltip = mapThemeBtn.querySelector('.ctrl-tooltip');
+      if (icon) icon.textContent = '🌙';
+      if (tooltip) tooltip.textContent = 'Dark Mode';
+    }
   }
 }
 
