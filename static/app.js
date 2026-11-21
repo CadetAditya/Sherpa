@@ -1,5 +1,5 @@
 /**
- * Uber Driver Intelligence Portal - Application Logic
+ * Sherpa Driver Intelligence Portal - Application Logic
  * Integrates FastAPI recommendation endpoints with Leaflet map visualization
  */
 
